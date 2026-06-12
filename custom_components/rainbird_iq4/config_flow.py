@@ -5,6 +5,7 @@ from __future__ import annotations
 import secrets
 import time
 from typing import Any
+from urllib.parse import urljoin
 
 import voluptuous as vol
 
@@ -13,6 +14,7 @@ from homeassistant.const import CONF_NAME, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant, callback
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.network import NoURLAvailableError, get_url
 
 from .const import (
     AUTH_METHOD_PASSWORD,
@@ -251,7 +253,17 @@ class RainBirdIQ4ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             sessions = self.hass.data.setdefault(DOMAIN, {}).setdefault(DATA_TOKEN_SESSIONS, {})
             _purge_old_token_sessions(sessions)
             sessions[self._token_session_id] = {"created_at": time.time()}
-        return f"{FRONTEND_URL_PATH}/{TOKEN_HELPER_FILENAME}?session={self._token_session_id}"
+        path = f"{FRONTEND_URL_PATH}/{TOKEN_HELPER_FILENAME}?session={self._token_session_id}"
+        try:
+            base_url = get_url(
+                self.hass,
+                allow_internal=False,
+                allow_external=True,
+                prefer_external=True,
+            )
+        except NoURLAvailableError:
+            return path
+        return urljoin(f"{base_url.rstrip('/')}/", path.lstrip("/"))
 
     def _get_captured_token(self) -> str | None:
         if not self._token_session_id:
