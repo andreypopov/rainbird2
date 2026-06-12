@@ -286,15 +286,25 @@ class RainBirdIQ4Card extends HTMLElement {
       )
       .join("");
 
-    const controllerOptions = controllers
-      .map(
-        (controller) => `
-          <option value="${this._escape(controller.id)}" ${controller.id === this._selectedControllerId ? "selected" : ""}>
-            ${this._escape(controller.name)}
-          </option>
+    const controllerField =
+      controllers.length > 1
+        ? `
+          <div class="field controller">
+            <label>Controller</label>
+            <select data-controller>
+              ${controllers
+                .map(
+                  (controller) => `
+                    <option value="${this._escape(controller.id)}" ${controller.id === this._selectedControllerId ? "selected" : ""}>
+                      ${this._escape(controller.name)}
+                    </option>
+                  `
+                )
+                .join("")}
+            </select>
+          </div>
         `
-      )
-      .join("");
+        : "";
 
     const stationRows = stations.length
       ? stations.map((station) => this._renderStation(station)).join("")
@@ -303,10 +313,7 @@ class RainBirdIQ4Card extends HTMLElement {
     return `
       <div class="status-strip">${connectionPills}</div>
       <div class="toolbar">
-        <div class="field controller">
-          <label>Controller</label>
-          <select data-controller>${controllerOptions}</select>
-        </div>
+        ${controllerField}
         <div class="field">
           <label>Duration, min</label>
           <input data-duration type="number" min="1" max="720" value="${this._escape(this._duration)}">
