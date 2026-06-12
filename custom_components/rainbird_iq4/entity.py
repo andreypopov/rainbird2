@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from homeassistant.const import CONF_NAME, CONNECTION_NETWORK_MAC
-from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.const import CONF_NAME
+from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC, DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, MANUFACTURER
@@ -48,4 +48,3 @@ class RainBirdIQ4Entity(CoordinatorEntity[RainBirdIQ4Coordinator]):
         if not self.coordinator.data:
             return False
         return self.coordinator.data.connection_statuses.get(self.controller_id, True)
-

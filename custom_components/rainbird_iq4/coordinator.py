@@ -9,11 +9,12 @@ import logging
 from typing import Any
 
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
-from .iq4_client import IQ4Client, IQ4Error
+from .iq4_client import IQ4AuthError, IQ4Client, IQ4Error, IQ4WafChallengeError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -63,8 +64,15 @@ class RainBirdIQ4Coordinator(DataUpdateCoordinator[RainBirdIQ4Data]):
                 *(self.client.get_stations(controller_id) for controller_id in controller_ids),
                 return_exceptions=True,
             )
-        except IQ4Error:
-            raise
+        except IQ4AuthError as err:
+            raise ConfigEntryAuthFailed("Rain Bird IQ4 rejected the username or password") from err
+        except IQ4WafChallengeError as err:
+            raise UpdateFailed(
+                "Rain Bird IQ4 login is protected by an AWS WAF browser challenge; "
+                "Home Assistant will retry later"
+            ) from err
+        except IQ4Error as err:
+            raise UpdateFailed(str(err)) from err
 
         stations: list[dict[str, Any]] = []
         for controller_id, result in zip(controller_ids, station_results, strict=False):
@@ -170,4 +178,3 @@ class RainBirdIQ4Coordinator(DataUpdateCoordinator[RainBirdIQ4Data]):
         expired = [station_id for station_id, until in self._running_until.items() if until <= now]
         for station_id in expired:
             self._running_until.pop(station_id, None)
-

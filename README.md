@@ -43,6 +43,8 @@ This project is unofficial and is not affiliated with Rain Bird.
 8. Download it.
 9. Restart Home Assistant.
 
+The integration ships Home Assistant brand assets in `custom_components/rainbird_iq4/brand/`, so recent Home Assistant versions can show the Rain Bird icon/logo for the custom integration after installation.
+
 ## Manual Install
 
 1. Download this repository.
@@ -74,6 +76,8 @@ After setup, each IQ4 controller should appear as a device with its stations and
 
 This integration includes a Lovelace custom card for day-to-day irrigation control.
 
+![Rain Bird IQ4 Lovelace card](docs/images/rainbird-iq4-card.png)
+
 The card can:
 
 - Auto-discover Rain Bird IQ4 station switches.
@@ -100,6 +104,18 @@ After installing the integration and restarting Home Assistant:
 
 6. Choose resource type **JavaScript module**.
 7. Refresh the browser tab.
+
+If your Home Assistant uses YAML-managed Lovelace resources (`lovelace: resource_mode: yaml`), add the resource in `configuration.yaml` instead:
+
+```yaml
+lovelace:
+  resource_mode: yaml
+  resources:
+    - url: /rainbird_iq4_static/rainbird-iq4-card.js
+      type: module
+```
+
+For manual installs where the integration static path is not available yet, copy `custom_components/rainbird_iq4/www/rainbird-iq4-card.js` to `/config/www/rainbird-iq4-card.js` and use `/local/rainbird-iq4-card.js` as the resource URL.
 
 ### Add The Card
 
