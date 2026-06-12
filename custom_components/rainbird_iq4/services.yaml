@@ -1,0 +1,85 @@
+start_station:
+  name: Start station
+  description: Start one or more Rain Bird IQ4 stations for a fixed duration.
+  fields:
+    station_id:
+      name: Station ID
+      description: Numeric IQ4 station ID. A list of station IDs is also accepted in YAML.
+      required: true
+      example: 12345
+      selector:
+        number:
+          mode: box
+          min: 1
+    duration:
+      name: Duration
+      description: Run duration in minutes.
+      required: false
+      default: 6
+      example: 10
+      selector:
+        number:
+          mode: box
+          min: 1
+          max: 720
+          unit_of_measurement: min
+    is_group_start:
+      name: Group start
+      description: Ask IQ4 to treat multiple station IDs as a grouped manual start.
+      required: false
+      default: false
+      selector:
+        boolean:
+
+stop_station:
+  name: Stop station
+  description: Stop one or more Rain Bird IQ4 stations.
+  fields:
+    station_id:
+      name: Station ID
+      description: Numeric IQ4 station ID. A list of station IDs is also accepted in YAML.
+      required: true
+      example: 12345
+      selector:
+        number:
+          mode: box
+          min: 1
+
+stop_all:
+  name: Stop all irrigation
+  description: Stop all irrigation on one or more Rain Bird IQ4 controllers.
+  fields:
+    controller_id:
+      name: Controller ID
+      description: Numeric IQ4 controller ID. A list of controller IDs is also accepted in YAML.
+      required: true
+      example: 1234
+      selector:
+        number:
+          mode: box
+          min: 1
+
+set_rain_delay:
+  name: Set rain delay
+  description: Set rain delay on a Rain Bird IQ4 controller.
+  fields:
+    controller_id:
+      name: Controller ID
+      description: Numeric IQ4 controller ID.
+      required: true
+      example: 1234
+      selector:
+        number:
+          mode: box
+          min: 1
+    days:
+      name: Days
+      description: Number of rain delay days.
+      required: true
+      example: 2
+      selector:
+        number:
+          mode: box
+          min: 0
+          max: 14
+          unit_of_measurement: d

@@ -1,0 +1,7 @@
+{
+  "name": "Rain Bird IQ4",
+  "render_readme": true,
+  "domains": ["binary_sensor", "number", "switch"],
+  "homeassistant": "2025.1.0"
+}
+

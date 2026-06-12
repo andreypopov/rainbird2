@@ -1,0 +1,36 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Rain Bird IQ4",
+        "description": "Sign in with your Rain Bird 2.0 / IQ4 account. This is not the 6 digit controller PIN.",
+        "data": {
+          "name": "Name",
+          "username": "Username",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect to Rain Bird IQ4.",
+      "invalid_auth": "Rain Bird IQ4 rejected the username or password.",
+      "waf_challenge": "Rain Bird IQ4 returned an AWS WAF browser challenge. Try again later or from a different network.",
+      "unknown": "Unexpected error."
+    },
+    "abort": {
+      "already_configured": "This Rain Bird IQ4 account is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Rain Bird IQ4 options",
+        "data": {
+          "default_duration": "Default station duration",
+          "scan_interval": "Cloud polling interval"
+        }
+      }
+    }
+  }
+}
+
