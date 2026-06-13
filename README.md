@@ -18,6 +18,7 @@ This project is unofficial and is not affiliated with Rain Bird.
 - Shows controller connection, rain pause, forecast delay, alerts, and program schedule status.
 - Keeps minutes and Run/Stop controls on the same row as the station name.
 - Shows optimistic `Starting...`, `Stopping...`, and `Refreshing` feedback while Home Assistant waits for the cloud state to update.
+- Throttles refresh actions so the integration refresh button is pressed at most once every 30 seconds by default.
 - Shows Stop all only when one or more zones are running.
 
 ## Requirements
@@ -135,6 +136,9 @@ show_programs: false
 | `controller_id` | string/number | unset | Controller selected by default when multiple controllers exist. |
 | `controller_names` | map | unset | Friendly names for controller IDs or prefixes. |
 | `show_programs` | boolean | `true` | Show program schedule/status rows. |
+| `refresh_throttle_seconds` | number | `30` | Minimum seconds between integration refresh button presses. |
+| `start_refresh_delay_seconds` | number | `8` | Delay before refreshing after a zone starts. |
+| `stop_refresh_delay_seconds` | number | `5` | Delay before refreshing after a zone stops. |
 
 ## Notes
 

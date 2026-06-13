@@ -27,6 +27,9 @@ class RainBirdIQ4Card extends HTMLElement {
     this._stationDurations = this._stationDurations || {};
     this._stationActions = this._stationActions || {};
     this._refreshingUntil = this._refreshingUntil || 0;
+    this._lastRefreshAt = this._lastRefreshAt || {};
+    this._scheduledRefreshAt = this._scheduledRefreshAt || {};
+    this._scheduledRefreshTimers = this._scheduledRefreshTimers || {};
     if (!this.shadowRoot) {
       this.attachShadow({ mode: "open" });
     }
@@ -1004,7 +1007,9 @@ class RainBirdIQ4Card extends HTMLElement {
             settleUntil: Date.now() + 20000,
             expiresAt: Date.now() + duration * 60000 + 45000,
           });
-          this._refreshControllerById(station.controllerId);
+          this._queueRefreshControllerById(station.controllerId, {
+            delayMs: this._startRefreshDelayMs(),
+          });
         },
         error: (error) => this._setStationError(station, error),
       });
@@ -1022,7 +1027,9 @@ class RainBirdIQ4Card extends HTMLElement {
           settleUntil: Date.now() + 20000,
           expiresAt: Date.now() + duration * 60000 + 45000,
         });
-        this._refreshControllerById(station.controllerId);
+        this._queueRefreshControllerById(station.controllerId, {
+          delayMs: this._startRefreshDelayMs(),
+        });
       },
       error: (error) => this._setStationError(station, error),
     });
@@ -1040,7 +1047,9 @@ class RainBirdIQ4Card extends HTMLElement {
       this._callService("rainbird_iq4", "stop_zone", {
         station_entity: station.entityId,
       }, {
-        success: () => this._refreshControllerById(station.controllerId),
+        success: () => this._queueRefreshControllerById(station.controllerId, {
+          delayMs: this._stopRefreshDelayMs(),
+        }),
         error: (error) => this._setStationError(station, error),
       });
       return;
@@ -1048,7 +1057,9 @@ class RainBirdIQ4Card extends HTMLElement {
     this._callService("rainbird_iq4", "stop_station", {
       station_id: Number(station.stationId),
     }, {
-      success: () => this._refreshControllerById(station.controllerId),
+      success: () => this._queueRefreshControllerById(station.controllerId, {
+        delayMs: this._stopRefreshDelayMs(),
+      }),
       error: (error) => this._setStationError(station, error),
     });
   }
@@ -1072,42 +1083,75 @@ class RainBirdIQ4Card extends HTMLElement {
   }
 
   _refreshController(controller) {
+    this._queueRefreshController(controller);
+  }
+
+  _queueRefreshController(controller, options = {}) {
     if (!controller?.refreshEntity) return;
-    this._refreshingUntil = Date.now() + 12000;
+    const now = Date.now();
+    const delayMs = Math.max(0, Number(options.delayMs || 0));
+    const throttleUntil = (this._lastRefreshAt[controller.id] || 0) + this._refreshThrottleMs();
+    const runAt = Math.max(now + delayMs, throttleUntil);
+    const scheduledAt = this._scheduledRefreshAt[controller.id];
+    if (scheduledAt && scheduledAt <= runAt) {
+      this._refreshingUntil = Math.max(this._refreshingUntil || 0, scheduledAt + 5000);
+      this._render(true);
+      return;
+    }
+    if (this._scheduledRefreshTimers[controller.id]) {
+      window.clearTimeout(this._scheduledRefreshTimers[controller.id]);
+    }
+    this._scheduledRefreshAt[controller.id] = runAt;
+    this._refreshingUntil = Math.max(this._refreshingUntil || 0, runAt + 5000);
     this._render(true);
+    this._scheduledRefreshTimers[controller.id] = window.setTimeout(() => {
+      this._performRefresh(controller.id);
+    }, Math.max(0, runAt - now));
+    this._syncTicker();
+  }
+
+  _performRefresh(controllerId) {
+    delete this._scheduledRefreshAt[controllerId];
+    delete this._scheduledRefreshTimers[controllerId];
+    const controller = this._getControllers(this._getStations()).find(
+      (item) => item.id === controllerId
+    );
+    if (!controller?.refreshEntity) return;
+    this._lastRefreshAt[controller.id] = Date.now();
+    this._refreshingUntil = Date.now() + 5000;
     this._callService("button", "press", { entity_id: controller.refreshEntity }, {
       success: () => {
         this._refreshingUntil = Date.now() + 5000;
-        this._scheduleRefreshFollowUps(controller.id);
         this._render(true);
       },
       error: (error) => {
         this._actionError = error?.message || String(error || "Service call failed");
+        this._lastRefreshAt[controller.id] = 0;
         this._refreshingUntil = 0;
         this._render(true);
       },
     });
   }
 
-  _refreshControllerById(controllerId) {
+  _queueRefreshControllerById(controllerId, options = {}) {
     const controller = this._getControllers(this._getStations()).find(
       (item) => item.id === controllerId
     );
     if (controller?.refreshEntity) {
-      this._refreshController(controller);
+      this._queueRefreshController(controller, options);
     }
   }
 
-  _scheduleRefreshFollowUps(controllerId) {
-    [2500, 7000, 14000].forEach((delay) => {
-      window.setTimeout(() => {
-        const controller = this._getControllers(this._getStations()).find(
-          (item) => item.id === controllerId
-        );
-        if (!controller?.refreshEntity) return;
-        this._callService("button", "press", { entity_id: controller.refreshEntity });
-      }, delay);
-    });
+  _refreshThrottleMs() {
+    return Math.max(5, Number(this._config.refresh_throttle_seconds || 30)) * 1000;
+  }
+
+  _startRefreshDelayMs() {
+    return Math.max(0, Number(this._config.start_refresh_delay_seconds || 8)) * 1000;
+  }
+
+  _stopRefreshDelayMs() {
+    return Math.max(0, Number(this._config.stop_refresh_delay_seconds || 5)) * 1000;
   }
 
   _selectedController() {
