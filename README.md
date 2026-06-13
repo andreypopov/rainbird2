@@ -34,7 +34,7 @@ This project is unofficial and is not affiliated with Rain Bird.
 4. Add this repository URL:
 
    ```text
-   https://github.com/andreypopov/rainbird2
+   https://github.com/andreypopov/rainbird_iq4
    ```
 
 5. Select category **Integration**.

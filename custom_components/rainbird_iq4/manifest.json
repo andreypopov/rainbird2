@@ -4,10 +4,10 @@
   "after_dependencies": [],
   "codeowners": ["@andreypopov"],
   "config_flow": true,
-  "documentation": "https://github.com/andreypopov/rainbird2",
+  "documentation": "https://github.com/andreypopov/rainbird_iq4",
   "integration_type": "hub",
   "iot_class": "cloud_polling",
-  "issue_tracker": "https://github.com/andreypopov/rainbird2/issues",
+  "issue_tracker": "https://github.com/andreypopov/rainbird_iq4/issues",
   "requirements": [],
   "single_config_entry": true,
   "version": "0.2.1"
