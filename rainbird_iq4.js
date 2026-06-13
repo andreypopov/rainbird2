@@ -690,13 +690,6 @@ class RainBirdIQ4Card extends HTMLElement {
         text: `${runningCount} zone${runningCount === 1 ? "" : "s"} running`,
       });
     }
-    if (this._isRefreshing()) {
-      pills.push({
-        icon: "mdi:refresh",
-        tone: "",
-        text: "Refreshing data",
-      });
-    }
     if (controller.connected !== undefined) {
       pills.push({
         icon: controller.connected ? "mdi:cloud-check" : "mdi:cloud-alert",
@@ -954,15 +947,18 @@ class RainBirdIQ4Card extends HTMLElement {
 
     this.shadowRoot.querySelectorAll("[data-start]").forEach((button) => {
       button.addEventListener("click", () => {
-        const station = this._stationByKey(button.dataset.start);
-        if (!station) return;
-        const input = this.shadowRoot.querySelector(
-          `[data-station-duration="${CSS.escape(station.key)}"]`
-        );
-        const duration = this._normalizeDuration(input?.value, station);
-        this._stationDurations[station.key] = duration;
-        if (input) input.value = duration;
-        this._startStation(station, duration);
+        try {
+          const station = this._stationByKey(button.dataset.start);
+          if (!station) return;
+          const input = this._durationInputForStation(station.key);
+          const duration = this._normalizeDuration(input?.value, station);
+          this._stationDurations[station.key] = duration;
+          if (input) input.value = duration;
+          this._startStation(station, duration);
+        } catch (error) {
+          this._actionError = error?.message || String(error || "Could not start zone");
+          this._render(true);
+        }
       });
     });
 
@@ -1112,6 +1108,12 @@ class RainBirdIQ4Card extends HTMLElement {
 
   _stationByKey(key) {
     return this._getStations().find((station) => station.key === key);
+  }
+
+  _durationInputForStation(stationKey) {
+    return [...this.shadowRoot.querySelectorAll("[data-station-duration]")].find(
+      (input) => input.dataset.stationDuration === stationKey
+    );
   }
 
   _getStations() {
@@ -1763,6 +1765,6 @@ customElements.define("rainbird-iq4-card-editor", RainBirdIQ4CardEditor);
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: "rainbird-iq4-card",
-  name: "Rain Bird IQ4",
+  name: "Rain Bird IQ4 Card",
   description: "Control Rain Bird IQ4 zones with per-zone durations and live schedule status.",
 });

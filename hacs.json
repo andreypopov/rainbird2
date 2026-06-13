@@ -1,7 +1,7 @@
 {
-  "name": "Rain Bird IQ4",
+  "name": "Rain Bird IQ4 Card",
+  "content_in_root": true,
+  "filename": "rainbird_iq4.js",
   "render_readme": true,
-  "domains": ["binary_sensor", "number", "switch"],
   "homeassistant": "2025.1.0"
 }
-
