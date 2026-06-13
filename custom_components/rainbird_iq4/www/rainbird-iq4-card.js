@@ -25,6 +25,8 @@ class RainBirdIQ4Card extends HTMLElement {
       ? String(this._config.controller_id)
       : this._selectedControllerId || null;
     this._stationDurations = this._stationDurations || {};
+    this._stationActions = this._stationActions || {};
+    this._refreshingUntil = this._refreshingUntil || 0;
     if (!this.shadowRoot) {
       this.attachShadow({ mode: "open" });
     }
@@ -32,6 +34,7 @@ class RainBirdIQ4Card extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+    this._reconcileStationActions();
     this._render();
   }
 
@@ -63,6 +66,7 @@ class RainBirdIQ4Card extends HTMLElement {
       (station) => !selectedController || station.controllerId === selectedController.id
     );
     const renderKey = this._buildRenderKey(stations, controllers, selectedController);
+    this._syncTicker();
 
     if (!force && renderKey === this._lastRenderKey) {
       return;
@@ -187,6 +191,10 @@ class RainBirdIQ4Card extends HTMLElement {
           white-space: nowrap;
         }
 
+        button:active:not([disabled]) {
+          transform: scale(0.98);
+        }
+
         button ha-icon {
           --mdc-icon-size: 18px;
         }
@@ -252,6 +260,13 @@ class RainBirdIQ4Card extends HTMLElement {
           color: var(--primary-text-color);
         }
 
+        .pill.live {
+          background: color-mix(in srgb, var(--success-color, #43a047) 20%, var(--secondary-background-color));
+          border-color: color-mix(in srgb, var(--success-color, #43a047) 46%, transparent);
+          color: var(--primary-text-color);
+          font-weight: 700;
+        }
+
         .section {
           display: grid;
           gap: 10px;
@@ -301,6 +316,11 @@ class RainBirdIQ4Card extends HTMLElement {
         .station.is-paused {
           background: color-mix(in srgb, var(--warning-color, #f4b400) 13%, var(--secondary-background-color));
           border-color: color-mix(in srgb, var(--warning-color, #f4b400) 34%, transparent);
+        }
+
+        .station.is-pending {
+          background: color-mix(in srgb, var(--primary-color) 12%, var(--secondary-background-color));
+          border-color: color-mix(in srgb, var(--primary-color) 36%, transparent);
         }
 
         .station-main {
@@ -364,6 +384,16 @@ class RainBirdIQ4Card extends HTMLElement {
           font-weight: 700;
         }
 
+        .meta .pending {
+          color: var(--primary-color);
+          font-weight: 700;
+        }
+
+        .meta .error-text {
+          color: var(--error-color, #db4437);
+          font-weight: 700;
+        }
+
         .station-actions {
           align-items: center;
           display: grid;
@@ -403,6 +433,16 @@ class RainBirdIQ4Card extends HTMLElement {
           color: var(--secondary-text-color);
           font-size: 12px;
           padding-right: 8px;
+        }
+
+        .spin {
+          animation: rainbird-spin 0.9s linear infinite;
+        }
+
+        @keyframes rainbird-spin {
+          to {
+            transform: rotate(360deg);
+          }
         }
 
         .program {
@@ -571,12 +611,14 @@ class RainBirdIQ4Card extends HTMLElement {
   _renderTopActions(controller, stations) {
     if (!controller) return "";
     const runningStations = stations.filter((station) => this._stationNeedsStop(station));
+    const refreshing = this._isRefreshing();
     return `
       ${
         controller.refreshEntity
           ? `
-            <button class="secondary icon" data-refresh title="Refresh Rain Bird data" aria-label="Refresh Rain Bird data">
-              <ha-icon icon="mdi:refresh"></ha-icon>
+            <button class="secondary ${refreshing ? "" : "icon"}" data-refresh title="Refresh Rain Bird data" aria-label="Refresh Rain Bird data" ${refreshing ? "disabled" : ""}>
+              <ha-icon class="${refreshing ? "spin" : ""}" icon="mdi:refresh"></ha-icon>
+              ${refreshing ? "Refreshing" : ""}
             </button>
           `
           : ""
@@ -596,6 +638,23 @@ class RainBirdIQ4Card extends HTMLElement {
 
   _renderPills(controller) {
     const pills = [];
+    const runningCount = this._visibleStations().filter((station) =>
+      this._stationAppearsRunning(station)
+    ).length;
+    if (runningCount) {
+      pills.push({
+        icon: "mdi:sprinkler-variant",
+        tone: "live",
+        text: `${runningCount} zone${runningCount === 1 ? "" : "s"} running`,
+      });
+    }
+    if (this._isRefreshing()) {
+      pills.push({
+        icon: "mdi:refresh",
+        tone: "",
+        text: "Refreshing data",
+      });
+    }
     if (controller.connected !== undefined) {
       pills.push({
         icon: controller.connected ? "mdi:cloud-check" : "mdi:cloud-alert",
@@ -673,19 +732,26 @@ class RainBirdIQ4Card extends HTMLElement {
   }
 
   _renderStation(station) {
-    const running = this._isStationRunning(station);
-    const paused = station.state === "paused";
+    const action = this._stationAction(station);
+    const starting = action?.type === "starting";
+    const stopping = action?.type === "stopping";
+    const actionError = action?.type === "error";
+    const running = !stopping && this._stationAppearsRunning(station);
+    const paused = !stopping && station.state === "paused";
     const disabled = this._isUnknown(station.state);
     const duration = this._durationForStation(station);
     const maxDuration = this._maxDurationForStation(station);
-    const remaining = this._formatRemaining(station.attributes.remaining ?? station.attributes.remaining_seconds);
+    const remaining = this._stationRemaining(station, action);
     const last = this._formatLastRun(station.attributes.last_run_completed || station.attributes.last_run);
     const meta = [
       station.terminal ? `Terminal ${station.terminal}` : null,
+      starting ? `<span class="pending">Starting...</span>` : null,
+      stopping ? `<span class="pending">Stopping...</span>` : null,
+      actionError ? `<span class="error-text">${this._escape(action.message || "Command failed")}</span>` : null,
       running && remaining ? `<span class="running">${this._escape(remaining)} left</span>` : null,
       running && !remaining ? `<span class="running">Running</span>` : null,
       paused ? `<span class="paused">Paused</span>` : null,
-      !running && !paused && !disabled ? "Idle" : null,
+      !running && !paused && !disabled && !stopping && !starting ? "Idle" : null,
       disabled ? this._humanState(station.state) : null,
       last ? `Last ${this._escape(last)}` : null,
     ]
@@ -693,7 +759,7 @@ class RainBirdIQ4Card extends HTMLElement {
       .join("<span>•</span>");
 
     return `
-      <div class="station ${running ? "is-running" : ""} ${paused ? "is-paused" : ""}">
+      <div class="station ${running ? "is-running" : ""} ${paused ? "is-paused" : ""} ${starting || stopping ? "is-pending" : ""}">
         <div class="station-main">
           <div class="terminal">${this._escape(station.terminal || "-")}</div>
           <div>
@@ -703,17 +769,31 @@ class RainBirdIQ4Card extends HTMLElement {
         </div>
         <div class="station-actions">
           ${
-            this._stationNeedsStop(station)
+            this._stationNeedsStop(station) || starting || stopping
               ? ""
               : `
                 <label class="duration" title="Run duration in minutes">
-                  <input data-station-duration="${this._escape(station.key)}" type="number" min="1" max="${maxDuration}" inputmode="numeric" value="${this._escape(duration)}" ${disabled ? "disabled" : ""}>
+                  <input data-station-duration="${this._escape(station.key)}" type="number" min="1" max="${maxDuration}" inputmode="numeric" value="${this._escape(duration)}" ${disabled || actionError ? "disabled" : ""}>
                   <span>min</span>
                 </label>
               `
           }
           ${
-            this._stationNeedsStop(station)
+            stopping
+              ? `
+                <button class="danger" title="Stopping ${this._escape(station.name)}" disabled>
+                  <ha-icon class="spin" icon="mdi:loading"></ha-icon>
+                  Stopping
+                </button>
+              `
+              : starting
+                ? `
+                  <button title="Starting ${this._escape(station.name)}" disabled>
+                    <ha-icon class="spin" icon="mdi:loading"></ha-icon>
+                    Starting
+                  </button>
+                `
+                : this._stationNeedsStop(station)
               ? `
                 <button class="danger" title="Stop ${this._escape(station.name)}" data-stop="${this._escape(station.key)}">
                   <ha-icon icon="mdi:stop"></ha-icon>
@@ -721,7 +801,7 @@ class RainBirdIQ4Card extends HTMLElement {
                 </button>
               `
               : `
-                <button title="Run ${this._escape(station.name)}" data-start="${this._escape(station.key)}" ${disabled ? "disabled" : ""}>
+                <button title="Run ${this._escape(station.name)}" data-start="${this._escape(station.key)}" ${disabled || actionError ? "disabled" : ""}>
                   <ha-icon icon="mdi:play"></ha-icon>
                   Run
                 </button>
@@ -805,8 +885,8 @@ class RainBirdIQ4Card extends HTMLElement {
 
     this.shadowRoot.querySelector("[data-refresh]")?.addEventListener("click", () => {
       const controller = this._selectedController();
-      if (!controller?.refreshEntity) return;
-      this._callService("button", "press", { entity_id: controller.refreshEntity });
+      if (!controller) return;
+      this._refreshController(controller);
     });
 
     this.shadowRoot.querySelector("[data-stop-all]")?.addEventListener("click", () => {
@@ -847,40 +927,127 @@ class RainBirdIQ4Card extends HTMLElement {
   }
 
   _startStation(station, duration) {
+    this._setStationAction(station, {
+      type: "starting",
+      duration,
+      requestedAt: Date.now(),
+      expiresAt: Date.now() + duration * 60000 + 45000,
+    });
+    this._render(true);
     if (station.mode === "sensor") {
       this._callService("rainbird_iq4", "start_zone", {
         station_entity: station.entityId,
         duration,
+      }, {
+        success: () => {
+          this._setStationAction(station, {
+            type: "running",
+            duration,
+            requestedAt: Date.now(),
+            expiresAt: Date.now() + duration * 60000 + 45000,
+          });
+          this._refreshControllerById(station.controllerId);
+        },
+        error: (error) => this._setStationError(station, error),
       });
       return;
     }
     this._callService("rainbird_iq4", "start_station", {
       station_id: Number(station.stationId),
       duration,
+    }, {
+      success: () => {
+        this._setStationAction(station, {
+          type: "running",
+          duration,
+          requestedAt: Date.now(),
+          expiresAt: Date.now() + duration * 60000 + 45000,
+        });
+        this._refreshControllerById(station.controllerId);
+      },
+      error: (error) => this._setStationError(station, error),
     });
   }
 
   _stopStation(station) {
+    this._setStationAction(station, {
+      type: "stopping",
+      requestedAt: Date.now(),
+      expiresAt: Date.now() + 45000,
+    });
+    this._render(true);
     if (station.mode === "sensor") {
       this._callService("rainbird_iq4", "stop_zone", {
         station_entity: station.entityId,
+      }, {
+        success: () => this._refreshControllerById(station.controllerId),
+        error: (error) => this._setStationError(station, error),
       });
       return;
     }
     this._callService("rainbird_iq4", "stop_station", {
       station_id: Number(station.stationId),
+    }, {
+      success: () => this._refreshControllerById(station.controllerId),
+      error: (error) => this._setStationError(station, error),
     });
   }
 
-  _callService(domain, service, data) {
+  _callService(domain, service, data, callbacks = {}) {
     this._actionError = "";
-    const result = this._hass.callService(domain, service, data);
-    if (result?.catch) {
-      result.catch((error) => {
-        this._actionError = error?.message || String(error || "Service call failed");
-        this._render(true);
-      });
+    try {
+      const result = this._hass.callService(domain, service, data);
+      Promise.resolve(result)
+        .then(() => callbacks.success?.())
+        .catch((error) => {
+          callbacks.error?.(error);
+          this._actionError = error?.message || String(error || "Service call failed");
+          this._render(true);
+        });
+    } catch (error) {
+      callbacks.error?.(error);
+      this._actionError = error?.message || String(error || "Service call failed");
+      this._render(true);
     }
+  }
+
+  _refreshController(controller) {
+    if (!controller?.refreshEntity) return;
+    this._refreshingUntil = Date.now() + 12000;
+    this._render(true);
+    this._callService("button", "press", { entity_id: controller.refreshEntity }, {
+      success: () => {
+        this._refreshingUntil = Date.now() + 5000;
+        this._scheduleRefreshFollowUps(controller.id);
+        this._render(true);
+      },
+      error: (error) => {
+        this._actionError = error?.message || String(error || "Service call failed");
+        this._refreshingUntil = 0;
+        this._render(true);
+      },
+    });
+  }
+
+  _refreshControllerById(controllerId) {
+    const controller = this._getControllers(this._getStations()).find(
+      (item) => item.id === controllerId
+    );
+    if (controller?.refreshEntity) {
+      this._refreshController(controller);
+    }
+  }
+
+  _scheduleRefreshFollowUps(controllerId) {
+    [2500, 7000, 14000].forEach((delay) => {
+      window.setTimeout(() => {
+        const controller = this._getControllers(this._getStations()).find(
+          (item) => item.id === controllerId
+        );
+        if (!controller?.refreshEntity) return;
+        this._callService("button", "press", { entity_id: controller.refreshEntity });
+      }, delay);
+    });
   }
 
   _selectedController() {
@@ -1128,7 +1295,7 @@ class RainBirdIQ4Card extends HTMLElement {
 
   _subtitle(stations, controller) {
     if (!stations.length) return "Ready when your Rain Bird zones are available";
-    const running = stations.filter((station) => this._isStationRunning(station)).length;
+    const running = stations.filter((station) => this._stationAppearsRunning(station)).length;
     if (running) return `${running} zone${running === 1 ? "" : "s"} running`;
     const connected = controller?.connected;
     if (connected === false) return "Controller is offline";
@@ -1153,12 +1320,64 @@ class RainBirdIQ4Card extends HTMLElement {
     return station?.mode === "sensor" ? 30 : 720;
   }
 
+  _stationAction(station) {
+    const action = this._stationActions?.[station.key];
+    if (!action) return null;
+    if (action.expiresAt && Date.now() > action.expiresAt) {
+      delete this._stationActions[station.key];
+      return null;
+    }
+    return action;
+  }
+
+  _setStationAction(station, action) {
+    this._stationActions = this._stationActions || {};
+    this._stationActions[station.key] = action;
+    this._syncTicker();
+  }
+
+  _setStationError(station, error) {
+    this._setStationAction(station, {
+      type: "error",
+      message: error?.message || String(error || "Command failed"),
+      expiresAt: Date.now() + 12000,
+    });
+    this._render(true);
+  }
+
+  _reconcileStationActions() {
+    if (!this._stationActions || !Object.keys(this._stationActions).length) return;
+    const stations = new Map(this._getStations().map((station) => [station.key, station]));
+    Object.entries(this._stationActions).forEach(([key, action]) => {
+      const station = stations.get(key);
+      if (!station || (action.expiresAt && Date.now() > action.expiresAt)) {
+        delete this._stationActions[key];
+        return;
+      }
+      if ((action.type === "starting" || action.type === "running") && this._isStationRunning(station)) {
+        delete this._stationActions[key];
+        return;
+      }
+      if (action.type === "stopping" && !this._isStationRunning(station) && station.state !== "paused") {
+        delete this._stationActions[key];
+      }
+    });
+    this._syncTicker();
+  }
+
   _isStationRunning(station) {
     return station.state === "running" || station.state === "on";
   }
 
+  _stationAppearsRunning(station) {
+    const action = this._stationAction(station);
+    if (action?.type === "stopping") return false;
+    if (action?.type === "starting" || action?.type === "running") return true;
+    return this._isStationRunning(station);
+  }
+
   _stationNeedsStop(station) {
-    return this._isStationRunning(station) || station.state === "paused";
+    return this._stationAppearsRunning(station) || station.state === "paused";
   }
 
   _isUnknown(state) {
@@ -1183,6 +1402,55 @@ class RainBirdIQ4Card extends HTMLElement {
     if (!Number.isFinite(number) || number <= 0) return "";
     const minutes = number > 720 ? Math.ceil(number / 60) : Math.ceil(number);
     return `${minutes} min`;
+  }
+
+  _stationRemaining(station, action) {
+    const liveRemaining = this._formatRemaining(
+      station.attributes.remaining ?? station.attributes.remaining_seconds
+    );
+    if (liveRemaining) return liveRemaining;
+    if (
+      (action?.type === "starting" || action?.type === "running") &&
+      action.duration &&
+      action.requestedAt
+    ) {
+      const remainingMs = action.requestedAt + action.duration * 60000 - Date.now();
+      if (remainingMs > 0) {
+        return `${Math.max(1, Math.ceil(remainingMs / 60000))} min`;
+      }
+    }
+    return "";
+  }
+
+  _isRefreshing() {
+    if (!this._refreshingUntil) return false;
+    if (Date.now() > this._refreshingUntil) {
+      this._refreshingUntil = 0;
+      return false;
+    }
+    return true;
+  }
+
+  _hasTemporaryState() {
+    return this._isRefreshing() || Boolean(Object.keys(this._stationActions || {}).length);
+  }
+
+  _syncTicker() {
+    if (this._hasTemporaryState()) {
+      if (this._ticker) return;
+      this._ticker = window.setInterval(() => {
+        this._reconcileStationActions();
+        if (!this._hasTemporaryState()) {
+          this._syncTicker();
+        }
+        this._render(true);
+      }, 1000);
+      return;
+    }
+    if (this._ticker) {
+      window.clearInterval(this._ticker);
+      this._ticker = null;
+    }
   }
 
   _formatLastRun(value) {
@@ -1223,6 +1491,16 @@ class RainBirdIQ4Card extends HTMLElement {
       config: this._config,
       selectedControllerId: selectedController?.id || null,
       actionError: this._actionError || "",
+      temporary: this._hasTemporaryState() ? Math.floor(Date.now() / 1000) : 0,
+      stationActions: Object.entries(this._stationActions || {}).map(([key, action]) => [
+        key,
+        action.type,
+        action.duration,
+        action.requestedAt,
+        action.expiresAt,
+        action.message,
+      ]),
+      refreshingUntil: this._refreshingUntil || 0,
       stations: stations.map((station) => [
         station.entityId,
         station.state,
