@@ -269,14 +269,81 @@
 
     function extractAccessToken(value) {
       if (!value) return "";
-      const text = String(value).trim();
-      const direct = text.match(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)?$/);
-      if (direct) return direct[0];
-      const hash = text.match(/access_token=([^&#\s]+)/);
-      if (hash) return decodeURIComponent(hash[1]);
-      const json = text.match(/["']access_token["']\s*:\s*["']([^"']+)["']/i);
-      if (json) return json[1];
-      return "";
+      const jwt = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)?$/;
+      const jwtCandidate = /(?:^|[^A-Za-z0-9_-])([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)?)(?=$|[^A-Za-z0-9_-])/g;
+      const found = [];
+      const seen = new Set();
+
+      function decodeText(text) {
+        let decoded = text;
+        for (let index = 0; index < 3; index += 1) {
+          try {
+            const next = decodeURIComponent(decoded.replace(/\+/g, "%20")).trim();
+            if (next === decoded) break;
+            decoded = next;
+          } catch (error) {
+            break;
+          }
+        }
+        return decoded;
+      }
+
+      function scoreToken(token, source, score) {
+        let clean = decodeText(String(token || "").trim().replace(/^bearer\s+/i, "").replace(/^["'`]|["'`.,;)]$/g, ""));
+        if (!jwt.test(clean) || seen.has(clean)) return;
+        seen.add(clean);
+        let finalScore = score;
+        if (/access[_-]?token/i.test(source || "")) finalScore -= 20;
+        try {
+          let payload = clean.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+          payload += "=".repeat((4 - (payload.length % 4)) % 4);
+          const data = JSON.parse(atob(payload));
+          const haystack = JSON.stringify(data).toLowerCase();
+          if (haystack.includes("coreapi")) finalScore -= 40;
+          if (haystack.includes(CLIENT_ID.toLowerCase()) && !haystack.includes("coreapi")) finalScore += 35;
+          if (data.exp && data.exp < Date.now() / 1000 + 60) finalScore += 100;
+        } catch (error) {
+          finalScore += 10;
+        }
+        found.push({ token: clean, score: finalScore });
+      }
+
+      function inspectText(text, score) {
+        const variants = [];
+        let current = String(text || "").trim();
+        for (let index = 0; index < 4 && current; index += 1) {
+          variants.push(current);
+          const next = decodeText(current);
+          if (next === current) break;
+          current = next;
+        }
+
+        for (const variant of variants) {
+          if (jwt.test(variant)) scoreToken(variant, variant, score + 30);
+          const bearer = variant.match(/\bbearer\s+([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)?)/i);
+          if (bearer) scoreToken(bearer[1], variant, score - 15);
+          const labeled = variant.match(/(?:^|[?&#\s"'])access[_-]?token\s*[:=]\s*["']?([^&"'#<>\s]+)/i);
+          if (labeled) scoreToken(labeled[1], variant, score - 30);
+          const json = variant.match(/["']access[_-]?token["']\s*:\s*["']([^"']+)["']/i);
+          if (json) scoreToken(json[1], variant, score - 35);
+          try {
+            const url = new URL(variant);
+            for (const part of [url.search, url.hash]) {
+              const params = new URLSearchParams(part.replace(/^[?#]/, ""));
+              if (params.has("access_token")) scoreToken(params.get("access_token"), part, score - 45);
+            }
+          } catch (error) {
+            if (variant.includes("=")) {
+              const params = new URLSearchParams(variant.replace(/^[?#]/, ""));
+              if (params.has("access_token")) scoreToken(params.get("access_token"), variant, score - 40);
+            }
+          }
+          for (const match of variant.matchAll(jwtCandidate)) scoreToken(match[1], variant, score + 45);
+        }
+      }
+
+      inspectText(value, 0);
+      return found.sort((a, b) => a.score - b.score)[0]?.token || "";
     }
 
     function bookmarkletSource(targetUrl) {

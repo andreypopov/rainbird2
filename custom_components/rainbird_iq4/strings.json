@@ -28,8 +28,8 @@
     "error": {
       "cannot_connect": "Could not connect to Rain Bird IQ4.",
       "invalid_auth": "Rain Bird IQ4 rejected the username, password, or token.",
-      "invalid_token": "Could not find an access token. Paste the full final Rain Bird URL or the raw access_token value.",
-      "token_missing": "No token has been captured yet. Open the token helper, send the token from Rain Bird, then submit again.",
+      "invalid_token": "Rain Bird rejected that token. Make sure you pasted the access_token value, not id_token, or open the token helper and capture a fresh token.",
+      "token_missing": "Could not find an access_token. Paste the full final Rain Bird URL, the whole helper output, or the raw access_token value.",
       "token_expired": "That access token is already expired. Open the Rain Bird login link again and paste the new final URL.",
       "waf_challenge": "Rain Bird IQ4 returned an AWS WAF browser challenge. Use browser token sign-in instead.",
       "unknown": "Unexpected error."

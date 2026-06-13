@@ -13,7 +13,7 @@ import secrets
 import string
 import time
 from typing import Any
-from urllib.parse import unquote, urlencode, urljoin
+from urllib.parse import parse_qsl, unquote, unquote_plus, urlencode, urljoin, urlsplit
 
 import aiohttp
 
@@ -27,8 +27,18 @@ SCOPE = "coreAPI.read coreAPI.write openid profile"
 RESPONSE_TYPE = "id_token token"
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 
-TOKEN_RE = re.compile(r"access_token=([^&\"#\s]+)")
+TOKEN_RE = re.compile(
+    r"(?:^|[?&#\s\"'])access[_-]?token\s*[:=]\s*[\"']?([^&\"'#<>\s]+)",
+    re.IGNORECASE,
+)
+BEARER_RE = re.compile(
+    r"\bbearer\s+([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)?)",
+    re.IGNORECASE,
+)
 JWT_RE = re.compile(r"^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)?$")
+JWT_CANDIDATE_RE = re.compile(
+    r"(?<![A-Za-z0-9_-])([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)?)(?![A-Za-z0-9_-])"
+)
 ANTIFORGERY_RE = re.compile(
     r'name="__RequestVerificationToken"[^>]*value="([^"]+)"'
     r'|value="([^"]+)"[^>]*name="__RequestVerificationToken"',
@@ -77,16 +87,144 @@ def build_browser_authorization_url() -> str:
 
 
 def extract_access_token(value: str | None) -> str | None:
-    """Extract a bearer token from a pasted callback URL or raw JWT value."""
+    """Extract an IQ4 API access token from pasted browser or helper output."""
     if not value:
         return None
-    value = value.strip()
-    if JWT_RE.fullmatch(value):
-        return value
-    match = TOKEN_RE.search(value)
-    if match:
-        return unquote(match.group(1))
-    return None
+
+    candidates: list[tuple[int, int, str]] = []
+    seen_values: set[str] = set()
+
+    def add_candidate(token: Any, score: int = 0, source: str = "") -> None:
+        if not isinstance(token, str):
+            return
+        clean = _clean_token_candidate(token)
+        if not clean or clean in seen_values or not JWT_RE.fullmatch(clean):
+            return
+        seen_values.add(clean)
+        candidates.append((score + _score_token_candidate(clean, source), len(candidates), clean))
+
+    def inspect_text(text: str, score: int = 0) -> None:
+        text = text.strip()
+        if not text:
+            return
+
+        add_candidate(text, score + 30, text)
+
+        if text.lower().startswith("bearer "):
+            add_candidate(text[7:], score - 20, text)
+
+        for match in BEARER_RE.finditer(text):
+            add_candidate(match.group(1), score - 15, text)
+
+        for chunk in _text_variants(text):
+            _extract_from_json(chunk, add_candidate, score - 35)
+            _extract_from_url_parts(chunk, add_candidate, score - 30)
+            for match in TOKEN_RE.finditer(chunk):
+                add_candidate(match.group(1), score - 25, chunk)
+
+        for match in JWT_CANDIDATE_RE.finditer(text):
+            add_candidate(match.group(1), score + 45, text)
+
+    inspect_text(str(value))
+
+    if not candidates:
+        return None
+
+    return sorted(candidates)[0][2]
+
+
+def _clean_token_candidate(value: str) -> str:
+    value = value.strip().strip("\"'`")
+    if value.lower().startswith("bearer "):
+        value = value[7:].strip()
+    for _ in range(3):
+        decoded = unquote_plus(value).strip().strip("\"'`")
+        if decoded == value:
+            break
+        value = decoded
+    return value.rstrip(".,;)")
+
+
+def _text_variants(value: str) -> list[str]:
+    variants = [value]
+    current = value
+    for _ in range(3):
+        decoded = unquote_plus(current)
+        if decoded == current:
+            break
+        variants.append(decoded)
+        current = decoded
+    return variants
+
+
+def _extract_from_json(
+    value: str,
+    add_candidate: Any,
+    score: int,
+    *,
+    depth: int = 0,
+) -> None:
+    if depth > 4:
+        return
+    try:
+        parsed = jsonlib.loads(value)
+    except (TypeError, ValueError, jsonlib.JSONDecodeError):
+        return
+    _walk_token_data(parsed, add_candidate, score, depth)
+
+
+def _walk_token_data(value: Any, add_candidate: Any, score: int, depth: int) -> None:
+    if depth > 5:
+        return
+    if isinstance(value, dict):
+        for key, item in value.items():
+            normalized_key = str(key).lower().replace("-", "_")
+            if normalized_key == "access_token":
+                add_candidate(item, score - 20, str(key))
+            elif isinstance(item, str):
+                _extract_from_json(item, add_candidate, score + 5, depth=depth + 1)
+            else:
+                _walk_token_data(item, add_candidate, score + 5, depth + 1)
+    elif isinstance(value, list):
+        for item in value:
+            _walk_token_data(item, add_candidate, score + 5, depth + 1)
+    elif isinstance(value, str):
+        _extract_from_json(value, add_candidate, score + 5, depth=depth + 1)
+
+
+def _extract_from_url_parts(value: str, add_candidate: Any, score: int) -> None:
+    parts = [value]
+    try:
+        split = urlsplit(value)
+    except ValueError:
+        split = None
+    if split is not None:
+        parts.extend(part for part in (split.query, split.fragment) if part)
+
+    for part in parts:
+        if "=" not in part:
+            continue
+        for key, item in parse_qsl(part, keep_blank_values=True):
+            normalized_key = key.lower().replace("-", "_")
+            if normalized_key == "access_token":
+                add_candidate(item, score - 20, key)
+
+
+def _score_token_candidate(token: str, source: str = "") -> int:
+    score = 0
+    source_lower = source.lower()
+    if "access_token" in source_lower or "access-token" in source_lower:
+        score -= 20
+    data = jwt_payload(token)
+    haystack = jsonlib.dumps(data, separators=(",", ":"), sort_keys=True).lower()
+    if "coreapi" in haystack or "coreapi.read" in haystack or "coreapi.write" in haystack:
+        score -= 40
+    if CLIENT_ID.lower() in haystack and "coreapi" not in haystack:
+        score += 35
+    exp = data.get("exp")
+    if isinstance(exp, (int, float)) and exp <= int(time.time()) + 60:
+        score += 100
+    return score
 
 
 def jwt_expiration(token: str) -> int | None:
